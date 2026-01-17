@@ -1,0 +1,98 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment variables
+.env
+.env.local
+
+# Model files
+models/*.gguf
+models/*.bin
+models/*.safetensors
+models/*.pt
+models/*.pth
+*.gguf
+*.bin
+
+# Data and logs
+logs/
+*.log
+*.csv
+experiments/*.json
+experiments/*.csv
+experiments/*.txt
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+getting_started.md
+
+# HuggingFace cache (usually in user home, but just in case)
+.cache/
+huggingface/
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+*.ipynb
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation builds
+docs/_build/
+
+# Backup files
+*.bak
+*_OLD.*
+*_backup.*
+
+# OS specific
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Large data files
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# Response data (can be large)
+src/data/responses/*.json
