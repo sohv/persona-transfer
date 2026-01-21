@@ -255,6 +255,48 @@ python extract_vectors.py --model gpt2-medium --trait silly
 
 MIT License - See LICENSE file
 
+## Diagnostic Tests
+
+The `tests/` directory contains systematic tests to diagnose why coherence breaks during cross-model persona transfer.
+
+### Hypothesis A: Magnitude Mismatch
+Tests if the vector direction is meaningful but scaled wrong.
+
+```bash
+python tests/test_hypothesis_a_magnitude_mismatch.py \
+  --source qwen2.5-7b-instruct \
+  --target llama-3.1-8b-instruct \
+  --trait silly \
+  --coefficients -1.0 0.0 1.0 2.0 \
+  --num-prompts 5
+```
+
+### Hypothesis B: Basis Mismatch
+Tests if the direction is rotated (basis mismatch between model latent spaces).
+
+```bash
+python tests/test_hypothesis_b_basis_mismatch.py \
+  --source qwen2.5-7b-instruct \
+  --target llama-3.1-8b-instruct \
+  --trait silly \
+  --coefficients 1.0 2.0 \
+  --num-prompts 5
+```
+
+### Hypothesis C: Layer Correspondence
+Tests if the vector hits the wrong layer (layer roles differ across families).
+
+```bash
+python tests/test_hypothesis_c_layer_correspondence.py \
+  --source qwen2.5-7b-instruct \
+  --target llama-3.1-8b-instruct \
+  --trait silly \
+  --coefficient 2.0 \
+  --num-prompts 5
+```
+
+Results are saved to `experiments/hypothesis_*_<source>_to_<target>_<trait>.json` with detailed measurements and conclusions.
+
 ## Acknowledgments
 
 Based on Chen et al. (2024) "Persona Vectors" methodology. This work extends their approach with cross-family transfer and parameter modulation for practical deployment.
