@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from models import _load_model, _generate_text_response
-from persona_vectors import load_persona_vectors
+from persona_vectors import load_persona_vectors_from_file
 
 # Configure logging
 logging.basicConfig(
@@ -126,7 +126,7 @@ Examples:
     # Load vectors
     logger.info(f"Loading persona vectors from: {args.vectors}")
     try:
-        vector_data = load_persona_vectors(Path(args.vectors))
+        vector_data = load_persona_vectors_from_file(Path(args.vectors))
         if not vector_data:
             logger.error("Failed to load vectors")
             sys.exit(1)

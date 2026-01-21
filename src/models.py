@@ -97,6 +97,16 @@ AVAILABLE_MODELS = {
         "max_length": 4096,
         "device_map": "auto"
     },
+    "llama-3.2-3b-instruct": {
+        "model_type": "causal_lm",
+        "model_class": "AutoModelForCausalLM",
+        "tokenizer_class": "AutoTokenizer",
+        "path": "meta-llama/Llama-3.2-3B-Instruct",
+        "description": "Llama-3.2-3B-Instruct (3B Parameters, 28 Layers) - Smaller Cross-Model Target",
+        "quantization": "none",
+        "max_length": 4096,
+        "device_map": "auto"
+    },
     "mistral-7b-instruct-v0.3": {
         "model_type": "causal_lm",
         "model_class": "AutoModelForCausalLM",
@@ -858,6 +868,9 @@ def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient):
         
         logger.info(f"Chen et al. injection: layer {layer_num}, coefficient {steering_coefficient}, vector shape {scaled_vector.shape}")
         
+        # Cache for adapted vector to avoid recomputing on every token
+        adapted_vector_cache = {'vector': None, 'target_size': None}
+        
         def chen_injection_hook(module, input, output):
             """
             Inject persona vector into layer 20 activations at final token position.
@@ -880,22 +893,56 @@ def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient):
                     
                 batch_size, seq_len, hidden_size = hidden_states.shape
                 
-                # Verify vector dimensions match hidden size
-                if scaled_vector.shape[0] != hidden_size:
-                    logger.error(f"Vector dimension mismatch: {scaled_vector.shape[0]} vs {hidden_size}")
-                    return output
+                # Handle vector dimension mismatch (cross-model transfer) - CACHE the adapted vector
+                if adapted_vector_cache['vector'] is None or adapted_vector_cache['target_size'] != hidden_size:
+                    adapted_vector = scaled_vector
+                    if scaled_vector.shape[0] != hidden_size:
+                        if not hasattr(chen_injection_hook, '_adaptation_logged'):
+                            logger.warning(f"Vector dimension mismatch: {scaled_vector.shape[0]} vs {hidden_size}. Adapting...")
+                            chen_injection_hook._adaptation_logged = True
+                        
+                        if scaled_vector.shape[0] > hidden_size:
+                            # Truncate: Use linear interpolation to downsample
+                            indices = torch.linspace(0, scaled_vector.shape[0] - 1, hidden_size, device=scaled_vector.device)
+                            indices_floor = indices.long()
+                            indices_ceil = torch.clamp(indices_floor + 1, max=scaled_vector.shape[0] - 1)
+                            weight = (indices - indices_floor.float()).unsqueeze(1)
+                            
+                            adapted_vector = (1 - weight.squeeze()) * scaled_vector[indices_floor] + weight.squeeze() * scaled_vector[indices_ceil]
+                            if not hasattr(chen_injection_hook, '_adaptation_logged'):
+                                logger.info(f"Downsampled vector from {scaled_vector.shape[0]} to {hidden_size} using interpolation")
+                        else:
+                            # Expand: Use linear interpolation to upsample
+                            indices = torch.linspace(0, scaled_vector.shape[0] - 1, hidden_size, device=scaled_vector.device)
+                            indices_floor = indices.long()
+                            indices_ceil = torch.clamp(indices_floor + 1, max=scaled_vector.shape[0] - 1)
+                            weight = (indices - indices_floor.float()).unsqueeze(1)
+                            
+                            adapted_vector = (1 - weight.squeeze()) * scaled_vector[indices_floor] + weight.squeeze() * scaled_vector[indices_ceil]
+                            if not hasattr(chen_injection_hook, '_adaptation_logged'):
+                                logger.info(f"Upsampled vector from {scaled_vector.shape[0]} to {hidden_size} using interpolation")
+                    
+                    # Cache the adapted vector
+                    adapted_vector_cache['vector'] = adapted_vector
+                    adapted_vector_cache['target_size'] = hidden_size
+                else:
+                    # Use cached adapted vector
+                    adapted_vector = adapted_vector_cache['vector']
                 
-                # Chen et al. style: Strong injection across ALL sequence positions
+                # Ensure adapted vector is on the same device as hidden_states
+                adapted_vector = adapted_vector.to(hidden_states.device)
+                
+                # Chen et al. style: Apply steering at FINAL token position only
                 # Create a new tensor to avoid in-place modification issues
                 modified_hidden_states = hidden_states.clone()
                 
-                # Apply MUCH stronger scaling - the original wasn't strong enough
-                injection_strength = abs(steering_coefficient) * 50.0  # Massive increase
-                effective_vector = scaled_vector * injection_strength
+                # Use moderate internal multiplier - user coefficient controls final strength
+                # Sweet spot: coefficient 2-5 gives total injection of 6-15x
+                injection_strength = abs(steering_coefficient) * 3.0
+                effective_vector = adapted_vector * injection_strength
                 
-                # Inject across ALL sequence positions for maximum effect
-                for pos in range(seq_len):
-                    modified_hidden_states[:, pos, :] = modified_hidden_states[:, pos, :] + effective_vector.unsqueeze(0).expand(batch_size, -1)
+                # Inject only at the LAST token position (Chen et al. methodology)
+                modified_hidden_states[:, -1, :] = modified_hidden_states[:, -1, :] + effective_vector.unsqueeze(0).expand(batch_size, -1)
                 
                 # Debug logging (only on first call to avoid spam)
                 if not hasattr(chen_injection_hook, '_debug_logged'):

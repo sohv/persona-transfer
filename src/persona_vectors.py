@@ -407,6 +407,22 @@ async def load_persona_vectors(model_id, trait_id):
         logger.error(f"Error loading vectors from {filepath}: {e}")
         return None
 
+def load_persona_vectors_from_file(filepath):
+    """Load persona vectors from a specific file path (synchronous version)."""
+    try:
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+        
+        # Convert vector lists back to numpy arrays
+        if 'vectors' in data:
+            for layer_name, vector_list in data['vectors'].items():
+                data['vectors'][layer_name] = np.array(vector_list)
+        
+        return data
+    except Exception as e:
+        logger.error(f"Error loading vectors from {filepath}: {e}")
+        return None
+
 async def list_available_vectors():
     """List all available persona vectors."""
     vectors = []
