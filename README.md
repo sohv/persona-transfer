@@ -24,23 +24,25 @@ Automatically identify the most effective transformer layers for steering rather
 ## Installation
 
 ```bash
-# Clone and setup
-git clone https://github.com/yourusername/cross-architecture-persona-transfer.git
-cd cross-architecture-persona-transfer
+# Setup environment
 ./setup.sh
 
 # Activate environment
 source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
 ```
 
 **Requirements:** Python 3.10+, CUDA GPU (8GB+ VRAM recommended)
 
-## Quick Usage
+## Running Experiments
 
-### Extract Persona Vectors
+### Step 1: Extract Persona Vectors
+
+Extract trait vectors from a source model:
 
 ```bash
-# Extract silly vectors from Qwen (source model)
 python extract_vectors.py \
     --model qwen2.5-7b-instruct \
     --trait silly
@@ -48,38 +50,56 @@ python extract_vectors.py \
 
 Vectors saved to `src/data/vectors/qwen2.5-7b-instruct_silly.json`
 
-### Test Cross-Model Transfer
+**Available traits:** silly, honest, helpful, rude, concise, verbose
+
+### Step 2: Evaluate Cross-Model Transfer
+
+Evaluate how vectors transfer to other models with integrated metrics:
 
 ```bash
-# Apply Qwen vectors to Llama (cross-family transfer)
-python apply_steering.py \
-    --model llama-3.1-8b-instruct \
-    --vectors src/data/vectors/qwen2.5-7b-instruct_silly.json \
-    --prompt "Explain how a computer works" \
-    --coefficient 1.5 \
-    --baseline
-```
-
-### Systematic Evaluation
-
-```bash
-# Evaluate transfer across multiple coefficients
 python evaluate_transfer.py \
     --source qwen2.5-7b-instruct \
     --target llama-3.1-8b-instruct \
     --trait silly \
-    --coefficients -2.0 -1.0 0.0 1.0 2.0 \
-    --output experiments/qwen_to_llama_silly.json
+    --coefficients -2.0 -1.0 0.0 1.0 2.0
 ```
 
-## Reproduce Paper Results
+**Metrics computed:**
+- **Coherence** (0-100): Response quality and fluency
+- **Trait Strength** (0-10): How strongly the persona trait is expressed
+
+**Output:** `experiments/qwen2.5-7b-instruct_to_llama-3.1-8b-instruct_silly_<timestamp>.json`
+
+### Step 3: Test on Custom Prompts
+
+Test steering on specific prompts:
 
 ```bash
-# Runs all main experiments (1-2 hours)
-./reproduce_paper.sh
+python apply_steering.py \
+    --model llama-3.1-8b-instruct \
+    --vectors src/data/vectors/qwen2.5-7b-instruct_silly.json \
+    --prompt "Explain machine learning" \
+    --coefficient 1.5 \
+    --baseline
 ```
 
-Results saved to `experiments/paper_results/`
+### Full Benchmark (All Model Pairs)
+
+Run complete cross-model transfer benchmark:
+
+```bash
+python benchmark_runner.py --config src/config/config.json
+```
+
+**Coverage:**
+- 3 models: Qwen2.5-7B, LLaMA-3.1-8B, Mistral-7B
+- 9 model pairs (source → target transfers)
+- 6 traits: silly, honest, helpful, rude, concise, verbose
+- 4 layer types: early, mid, late, all
+- 5 steering magnitudes: [0, 0.5, 1.0, 2.0, 4.0]
+- Total: 1,080 cross-model transfer evaluations
+
+**Runtime:** ~2-4 hours on GPU
 
 ## Command-Line Interface
 
