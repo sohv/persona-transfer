@@ -1,90 +1,35 @@
 """
-Model loading and inference for cross-model persona transfer:
-- HuggingFace transformers (Qwen, Llama, Mistral, GPT-2) - Direct activation injection
-- GGUF models via llama.cpp (GPT-OSS 20B) - Parameter modulation steering
+Model loading and inference for cross-model persona transfer.
+Supports HuggingFace transformers with direct activation injection.
 
-KEY INNOVATION - Parameter Modulation Method:
-For GGUF/quantized models without activation access, we map persona vector statistics
-to generation parameters. This enables 'black-box' steering for APIs and edge devices.
-
-Vector stats → Generation parameters mapping:
-- Vector magnitude (norm) → temperature adjustment
-- Vector polarity (positive/negative trait) → top_p, repetition_penalty
-- Steering coefficient → scales the adjustments
-
-This allows persona control without requiring model internals access.
+Supported models:
+- Qwen 2.5 7B Instruct
+- LLaMA 3.1 8B Instruct
+- Mistral 7B Instruct v0.3
 """
-import os
-import json
 import logging
-import asyncio
 import time
 import numpy as np
 import torch
-from dotenv import load_dotenv
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
-    BitsAndBytesConfig,
-    GenerationConfig
+    BitsAndBytesConfig
 )
-from accelerate import Accelerator
-
-# Load environment variables
-load_dotenv()
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# GGUF support for GPT-OSS 20B
-try:
-    from llama_cpp import Llama, LlamaGrammar
-    LLAMA_CPP_AVAILABLE = True
-    logger.info("llama-cpp-python available - GGUF support enabled")
-except ImportError:
-    LLAMA_CPP_AVAILABLE = False
-    logger.warning("llama-cpp-python not available - install for GGUF support")
-
-# Available models - focused on gpt-oss:20b
+# Available models
 AVAILABLE_MODELS = {
     "qwen2.5-7b-instruct": {
         "model_type": "causal_lm",
         "model_class": "AutoModelForCausalLM",
         "tokenizer_class": "AutoTokenizer",
         "path": "Qwen/Qwen2.5-7B-Instruct",
-        "description": "Qwen2.5-7B-Instruct (7B Parameters) - Source Model for Vector Extraction",
+        "description": "Qwen2.5-7B-Instruct (7B Parameters)",
         "quantization": "none",
         "max_length": 4096,
-        "device_map": "auto"
-    },
-    "gpt2-medium": {
-        "model_type": "causal_lm",
-        "model_class": "AutoModelForCausalLM",
-        "tokenizer_class": "AutoTokenizer", 
-        "path": "gpt2-medium",
-        "description": "GPT-2 Medium (355M Parameters, 24 Layers)",
-        "quantization": "none",
-        "max_length": 1024,
-        "device_map": "auto"
-    },
-    "gpt2": {
-        "model_type": "causal_lm",
-        "model_class": "AutoModelForCausalLM",
-        "tokenizer_class": "AutoTokenizer",
-        "path": "gpt2", 
-        "description": "GPT-2 Base (117M Parameters, 12 Layers) - Small",
-        "quantization": "none",
-        "max_length": 1024,
-        "device_map": "auto"
-    },
-    "dialogpt-medium": {
-        "model_type": "causal_lm",
-        "model_class": "AutoModelForCausalLM",
-        "tokenizer_class": "AutoTokenizer",
-        "path": "microsoft/DialoGPT-medium",
-        "description": "DialoGPT Medium (355M) - Conversational Focused",
-        "quantization": "none",
-        "max_length": 1024,
         "device_map": "auto"
     },
     "llama-3.1-8b-instruct": {
@@ -92,17 +37,7 @@ AVAILABLE_MODELS = {
         "model_class": "AutoModelForCausalLM",
         "tokenizer_class": "AutoTokenizer",
         "path": "meta-llama/Llama-3.1-8B-Instruct",
-        "description": "Llama-3.1-8B-Instruct (8B Parameters, 32 Layers) - Cross-Model Target",
-        "quantization": "none",
-        "max_length": 4096,
-        "device_map": "auto"
-    },
-    "llama-3.2-3b-instruct": {
-        "model_type": "causal_lm",
-        "model_class": "AutoModelForCausalLM",
-        "tokenizer_class": "AutoTokenizer",
-        "path": "meta-llama/Llama-3.2-3B-Instruct",
-        "description": "Llama-3.2-3B-Instruct (3B Parameters, 28 Layers) - Smaller Cross-Model Target",
+        "description": "Llama-3.1-8B-Instruct (8B Parameters)",
         "quantization": "none",
         "max_length": 4096,
         "device_map": "auto"
@@ -112,23 +47,10 @@ AVAILABLE_MODELS = {
         "model_class": "AutoModelForCausalLM",
         "tokenizer_class": "AutoTokenizer",
         "path": "mistralai/Mistral-7B-Instruct-v0.3",
-        "description": "Mistral-7B-Instruct-v0.3 (7B Parameters, 32 Layers) - Cross-Model Target",
+        "description": "Mistral-7B-Instruct-v0.3 (7B Parameters)",
         "quantization": "none",
         "max_length": 4096,
         "device_map": "auto"
-    },
-    "gpt-oss-20b": {
-        "model_type": "gguf",
-        "model_class": "Llama",
-        "tokenizer_class": "AutoTokenizer",
-        "path": "models/openai_gpt-oss-20b-Q4_K_M.gguf",
-        "tokenizer_path": "openai/gpt-oss-20b",
-        "description": "GPT-OSS 20B (GGUF Quantized) - Parameter Modulation Target",
-        "quantization": "Q4_K_M",
-        "max_length": 2048,
-        "context_length": 4096,
-        "gpu_layers": -1,
-        "threads": 8
     }
 }
 
@@ -192,50 +114,8 @@ def _load_model(model_id):
             logger.info("Cleared CUDA memory cache")
 
     config = _get_model_config(model_id)
-    model_type = config["model_type"]
-    logger.info(f"Loading {model_id} (type: {model_type})...")
-
-    if model_type == "gguf":
-        # Handle GGUF models via llama.cpp
-        return _load_gguf_model(model_id, config)
-    else:
-        # Handle HuggingFace models (causal_lm)
-        return _load_hf_model(model_id, config)
-
-def _load_gguf_model(model_id, config):
-    """Load GGUF model via llama.cpp with GPU acceleration."""
-    if not LLAMA_CPP_AVAILABLE:
-        raise ImportError("llama-cpp-python not available. Install with: CMAKE_ARGS='-DLLAMA_CUBLAS=on' pip install llama-cpp-python")
-    
-    logger.info("Loading GGUF model with GPU acceleration...")
-    
-    # Load tokenizer from HuggingFace for compatibility
-    tokenizer_path = config.get("tokenizer_path", config["path"])
-    tokenizer = AutoTokenizer.from_pretrained(
-        tokenizer_path,
-        trust_remote_code=True,
-        padding_side="left"
-    )
-    
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-    
-    # Load GGUF model with GPU acceleration
-    model = Llama(
-        model_path=config["path"],
-        n_ctx=config.get("context_length", 4096),
-        n_gpu_layers=config.get("gpu_layers", -1),  # Use all available GPU layers
-        n_threads=config.get("threads", 8),
-        verbose=False,
-        use_mmap=True,
-        use_mlock=False  # Don't lock memory on non-macOS systems
-    )
-    
-    _loaded_models[model_id] = model
-    _loaded_tokenizers[model_id] = tokenizer
-    
-    logger.info(f"Successfully loaded GGUF model {model_id}")
-    return model, tokenizer
+    logger.info(f"Loading {model_id}...")
+    return _load_hf_model(model_id, config)
 
 def _load_hf_model(model_id, config):
     """Load HuggingFace transformers model."""
@@ -383,117 +263,30 @@ def _detach_hooks(hooks):
     for hook in hooks:
         hook.remove()
 
-def _generate_text_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens=150, persona_vectors=None, steering_coefficient=0.0):
+def _generate_text_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens=150, persona_vectors=None, steering_coefficient=0.0, source_model_id=None):
     """
-    Generate text response using either HuggingFace or GGUF models with optional persona vector steering.
+    Generate text response using HuggingFace models with optional persona vector steering.
 
     Args:
-        model: The loaded model (HuggingFace or llama.cpp)
+        model: The loaded model
         tokenizer: The tokenizer for the model
-        model_id: Model identifier to determine generation method
+        model_id: Model identifier (also target model ID)
         system_prompt: System prompt to guide behavior
         user_prompt: User's question/prompt
         max_new_tokens: Maximum number of new tokens to generate
         persona_vectors: Dict of layer_name -> numpy vector for steering
         steering_coefficient: Strength of steering (-2.0 to 2.0)
+        source_model_id: Optional source model ID for cross-model transfer (dimension mapping)
 
     Returns:
         Generated response text
     """
-    config = _get_model_config(model_id)
-    model_type = config["model_type"]
-
     # Detect if this is trait generation (needs lower temperature for JSON)
     is_trait_generation = "Generate the complete trait artifacts" in user_prompt
 
-    # Handle GGUF models differently from HuggingFace models
-    if model_type == "gguf":
-        return _generate_gguf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens, persona_vectors, steering_coefficient)
-    else:
-        return _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens, persona_vectors, steering_coefficient, is_trait_generation)
+    return _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens, persona_vectors, steering_coefficient, is_trait_generation, source_model_id)
 
-def _generate_gguf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens=150, persona_vectors=None, steering_coefficient=0.0):
-    """Generate response using llama.cpp GGUF model."""
-    # Construct the full prompt
-    if "gpt-oss" in model_id.lower() or "gpt" in model_id.lower():
-        # GPT-style format
-        full_prompt = f"{system_prompt}\n\nHuman: {user_prompt}\n\nAssistant:"
-    else:
-        # Generic format
-        full_prompt = f"{system_prompt}\n\nUser: {user_prompt}\n\nAssistant:"
-    
-    # Calculate generation parameters based on persona vectors
-    # Lower base temperature for more consistent baseline behavior
-    base_temp = 0.3
-    base_top_p = 0.8
-    base_rep_penalty = 1.05
-    
-    if persona_vectors and steering_coefficient != 0.0:
-        # Use persona vector characteristics to influence generation
-        target_layer = len(list(persona_vectors.keys())) // 2
-        target_layer_name = f"layer_{target_layer}"
-        
-        if target_layer_name in persona_vectors:
-            vector = persona_vectors[target_layer_name]
-            if isinstance(vector, np.ndarray):
-                magnitude_factor = min(np.linalg.norm(vector) / 100.0, 1.5)
-                
-                if steering_coefficient > 0:
-                    # More creative/silly
-                    temperature = min(base_temp * (1 + magnitude_factor * abs(steering_coefficient) * 0.5), 1.2)
-                    top_p = min(base_top_p * (1 + abs(steering_coefficient) * 0.1), 0.95)
-                    repetition_penalty = max(base_rep_penalty * (1 - abs(steering_coefficient) * 0.1), 0.9)
-                else:
-                    # More serious/focused
-                    temperature = max(base_temp * (1 - magnitude_factor * abs(steering_coefficient) * 0.3), 0.3)
-                    top_p = max(base_top_p * (1 - abs(steering_coefficient) * 0.1), 0.7)
-                    repetition_penalty = min(base_rep_penalty * (1 + abs(steering_coefficient) * 0.1), 1.3)
-                
-                logger.info(f"GGUF persona steering: temp={temperature:.2f}, top_p={top_p:.2f}, rep_penalty={repetition_penalty:.2f}")
-            else:
-                temperature, top_p, repetition_penalty = base_temp, base_top_p, base_rep_penalty
-        else:
-            temperature, top_p, repetition_penalty = base_temp, base_top_p, base_rep_penalty
-    else:
-        temperature, top_p, repetition_penalty = base_temp, base_top_p, base_rep_penalty
-    
-    try:
-        # Clear any previous context to prevent cumulative effects
-        if hasattr(model, 'reset'):
-            model.reset()
-        elif hasattr(model, '_ctx'):
-            # Force context reset for llama.cpp
-            try:
-                model._ctx.reset()
-            except:
-                pass  # Context reset failed, continue anyway
-        
-        # Generate using llama.cpp API with fresh context
-        response = model(
-            full_prompt,
-            max_tokens=max_new_tokens,
-            temperature=temperature,
-            top_p=top_p,
-            repeat_penalty=repetition_penalty,
-            stop=["Human:", "User:", "\nHuman:", "\nUser:"],
-            echo=False,
-            # Force fresh generation, no context reuse
-            seed=-1  # Random seed each time
-        )
-        
-        # Extract the generated text
-        if isinstance(response, dict) and 'choices' in response:
-            generated_text = response['choices'][0]['text']
-        else:
-            generated_text = str(response)
-        
-        return generated_text.strip()
-        
-    except Exception as e:
-        logger.error(f"GGUF generation error: {e}")
-        raise e
-
-def _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens=150, persona_vectors=None, steering_coefficient=0.0, is_trait_generation=False):
+def _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens=150, persona_vectors=None, steering_coefficient=0.0, is_trait_generation=False, source_model_id=None):
     """Generate response using HuggingFace transformers model."""
     # Construct the full prompt based on model type
     if "qwen" in model_id.lower():
@@ -506,8 +299,7 @@ def _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt
         # Mistral chat format
         full_prompt = f"<s>[INST] {system_prompt}\n\n{user_prompt} [/INST]"
     else:
-        # Generic format for GPT-2 etc.
-        full_prompt = f"{system_prompt}\n\nHuman: {user_prompt}\n\nAssistant:"
+        raise ValueError(f"Unsupported model: {model_id}. Only qwen, llama, and mistral models are supported.")
     
     # Tokenize the input
     inputs = tokenizer(
@@ -540,7 +332,13 @@ def _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt
         # Use Chen et al. layer 20 activation injection for Qwen/Llama/Mistral models when steering
         # These models share the same model.model.layers architecture and support direct activation hooks
         logger.info(f"Using Chen et al. activation injection for {model_id}")
-        steering_hooks = _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient)
+        steering_hooks = _setup_chen_layer20_injection(
+            model,
+            persona_vectors,
+            steering_coefficient,
+            source_model_id=source_model_id,
+            target_model_id=model_id
+        )
         # Temperature varies by use case
         if is_trait_generation:
             temperature = 0.5  # Lower for JSON consistency in trait generation
@@ -688,23 +486,79 @@ def _setup_minimal_steering_hook(model, target_layer_name, persona_vector, steer
     
     return hooks
 
-def _setup_steering_hooks(model, persona_vectors, steering_coefficient):
+def _setup_steering_hooks(model, persona_vectors, steering_coefficient, source_model_id=None, target_model_id=None):
     """
     Setup forward hooks to inject persona vectors during generation.
-    
+
+    Automatically handles dimension mismatch by applying learned mappings
+    when transferring vectors across models with different hidden sizes.
+
     Args:
         model: The GPT-2 model
         persona_vectors: Dict of layer_name -> numpy array
         steering_coefficient: Strength multiplier for vectors
-        
+        source_model_id: Optional source model ID for dimension mapping
+        target_model_id: Optional target model ID for dimension mapping
+
     Returns:
         List of hook handles to remove later
     """
     hooks = []
     device = next(model.parameters()).device
-    
+
     logger.info(f"Setting up steering hooks for {len(persona_vectors)} layers...")
-    
+
+    # Detect dimension mismatch and apply mapping if needed
+    if persona_vectors:
+        first_vector = next(iter(persona_vectors.values()))
+        source_dim = first_vector.shape[0] if isinstance(first_vector, np.ndarray) else len(first_vector)
+
+        # Get model's hidden size
+        if hasattr(model, 'config') and hasattr(model.config, 'hidden_size'):
+            target_dim = model.config.hidden_size
+        elif hasattr(model, 'config') and hasattr(model.config, 'n_embd'):
+            target_dim = model.config.n_embd
+        else:
+            # Fallback: detect from model parameters
+            if hasattr(model, 'transformer') and hasattr(model.transformer, 'h'):
+                # Try to get dimension from first layer
+                first_layer = model.transformer.h[0]
+                if hasattr(first_layer, 'ln_1') and hasattr(first_layer.ln_1, 'weight'):
+                    target_dim = first_layer.ln_1.weight.shape[0]
+                else:
+                    target_dim = source_dim  # Assume match if can't detect
+            else:
+                target_dim = source_dim
+
+        logger.info(f"Detected dimensions: source={source_dim}, target={target_dim}")
+
+        # Apply dimension mapping if needed
+        if source_dim != target_dim:
+            logger.warning(f"Dimension mismatch detected: {source_dim} → {target_dim}")
+
+            if source_model_id and target_model_id:
+                try:
+                    from dimension_mapper import get_dimension_mapper
+                    mapper = get_dimension_mapper()
+
+                    logger.info(f"Applying dimension mapping: {source_model_id}({source_dim}) → {target_model_id}({target_dim})")
+                    persona_vectors = mapper.apply_mapping(
+                        persona_vectors,
+                        source_model_id,
+                        target_model_id,
+                        source_dim,
+                        target_dim
+                    )
+                    logger.info("Successfully applied dimension mapping")
+                except Exception as e:
+                    logger.error(f"Failed to apply dimension mapping: {e}")
+                    logger.error(f"Steering will be skipped due to dimension mismatch")
+                    return []  # Return empty hooks list
+            else:
+                logger.error(f"Cannot apply dimension mapping: source_model_id or target_model_id not provided")
+                logger.error(f"Steering will be skipped. Provide model IDs to enable cross-model transfer.")
+                return []  # Return empty hooks list
+
     # Convert persona vectors to tensors on the right device with correct dtype
     vector_tensors = {}
     model_dtype = next(model.parameters()).dtype  # Get model's dtype (float16 or float32)
@@ -805,27 +659,74 @@ def _setup_steering_hooks(model, persona_vectors, steering_coefficient):
     
     return hooks
 
-def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient):
+def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient, source_model_id=None, target_model_id=None):
     """
     Chen et al. (2024) style layer 20 activation injection for HuggingFace models.
     Injects persona vector directly into layer 20 activations during forward pass.
-    
+
+    Automatically handles dimension mismatch by applying learned mappings
+    when transferring vectors across models with different hidden sizes.
+
     Args:
         model: HuggingFace transformer model (e.g., Qwen2.5-7B)
         persona_vectors: Dict of layer_name -> numpy array
         steering_coefficient: Strength multiplier for vector injection
-        
+        source_model_id: Optional source model ID for dimension mapping
+        target_model_id: Optional target model ID for dimension mapping
+
     Returns:
         List of hook handles to remove later
     """
     hooks = []
-    
+
+    # Detect dimension mismatch and apply mapping if needed
+    if persona_vectors:
+        first_vector = next(iter(persona_vectors.values()))
+        source_dim = first_vector.shape[0] if isinstance(first_vector, np.ndarray) else len(first_vector)
+
+        # Get model's hidden size
+        if hasattr(model, 'config') and hasattr(model.config, 'hidden_size'):
+            target_dim = model.config.hidden_size
+        elif hasattr(model, 'config') and hasattr(model.config, 'n_embd'):
+            target_dim = model.config.n_embd
+        else:
+            target_dim = source_dim
+
+        logger.info(f"Detected dimensions: source={source_dim}, target={target_dim}")
+
+        # Apply dimension mapping if needed
+        if source_dim != target_dim:
+            logger.warning(f"Dimension mismatch detected: {source_dim} → {target_dim}")
+
+            if source_model_id and target_model_id:
+                try:
+                    from dimension_mapper import get_dimension_mapper
+                    mapper = get_dimension_mapper()
+
+                    logger.info(f"Applying dimension mapping: {source_model_id}({source_dim}) → {target_model_id}({target_dim})")
+                    persona_vectors = mapper.apply_mapping(
+                        persona_vectors,
+                        source_model_id,
+                        target_model_id,
+                        source_dim,
+                        target_dim
+                    )
+                    logger.info("Successfully applied dimension mapping")
+                except Exception as e:
+                    logger.error(f"Failed to apply dimension mapping: {e}")
+                    logger.error(f"Steering will be skipped due to dimension mismatch")
+                    return []  # Return empty hooks list
+            else:
+                logger.error(f"Cannot apply dimension mapping: source_model_id or target_model_id not provided")
+                logger.error(f"Steering will be skipped. Provide model IDs to enable cross-model transfer.")
+                return []  # Return empty hooks list
+
     # Only inject at layer 20 (following Chen et al. methodology)
     target_layer_name = "layer_20"
-    
+
     # Debug: List all available vector layers
     logger.info(f"Available persona vector layers: {list(persona_vectors.keys())}")
-    
+
     if target_layer_name not in persona_vectors:
         logger.warning(f"No persona vector found for {target_layer_name}, skipping Chen injection")
         # Try to find the closest layer if layer_20 doesn't exist
@@ -837,7 +738,7 @@ def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient):
             logger.info(f"Using fallback layer: {target_layer_name}")
         else:
             return hooks
-    
+
     try:
         # Extract layer number from target_layer_name (e.g., "layer_20" -> 20)
         layer_num = int(target_layer_name.split('_')[1])
@@ -845,25 +746,25 @@ def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient):
         logger.info(f"Targeting model layer {layer_num} for Chen injection")
         device = next(model.parameters()).device
         model_dtype = next(model.parameters()).dtype
-        
+
         # Prepare persona vector
         persona_vector = persona_vectors[target_layer_name]
         if not isinstance(persona_vector, np.ndarray):
             logger.error(f"Persona vector for {target_layer_name} is not a numpy array")
             return hooks
-            
+
         vector_tensor = torch.from_numpy(persona_vector).to(dtype=model_dtype, device=device)
-        
+
         # Debug: Check if vector has meaningful values
         vector_norm = torch.norm(vector_tensor).item()
         vector_mean = torch.mean(vector_tensor).item()
         vector_std = torch.std(vector_tensor).item()
         logger.info(f"Persona vector stats: norm={vector_norm:.6f}, mean={vector_mean:.6f}, std={vector_std:.6f}")
-        
+
         if vector_norm < 1e-6:
             logger.error(f"Persona vector is essentially zero! norm={vector_norm}")
             return hooks
-        
+
         scaled_vector = vector_tensor * steering_coefficient
         
         logger.info(f"Chen et al. injection: layer {layer_num}, coefficient {steering_coefficient}, vector shape {scaled_vector.shape}")

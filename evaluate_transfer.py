@@ -418,7 +418,8 @@ async def evaluate_single_transfer(
                     user_prompt=prompt,
                     max_new_tokens=max_tokens,
                     persona_vectors=vector_data['vectors'] if coefficient != 0.0 else None,
-                    steering_coefficient=coefficient
+                    steering_coefficient=coefficient,
+                    source_model_id=source_model_id  # Pass source model ID for dimension mapping
                 )
                 
                 # Compute metrics
@@ -457,9 +458,36 @@ async def evaluate_single_transfer(
     # Unload model to free memory
     unload_model(target_model_id)
     
+    # Determine transfer type
+    is_cross_model = source_model_id != target_model_id
+    transfer_type = "cross-model" if is_cross_model else "same-model"
+
+    # Check if dimension mapping was needed
+    import json
+    with open(vector_file, 'r') as f:
+        vector_metadata = json.load(f)
+
+    source_vectors = vector_metadata.get('vectors', {})
+    if source_vectors:
+        first_vector = next(iter(source_vectors.values()))
+        source_dim = len(first_vector)
+    else:
+        source_dim = None
+
+    # Get target dimension from config
+    with open("src/config/config.json") as f:
+        config = json.load(f)
+    target_dim = config['models'].get(target_model_id, {}).get('hidden_size', source_dim)
+
+    dimension_mapping_used = source_dim != target_dim if source_dim and target_dim else False
+
     return {
         'source_model': source_model_id,
         'target_model': target_model_id,
+        'transfer_type': transfer_type,
+        'dimension_mapping_used': dimension_mapping_used,
+        'source_dimension': source_dim,
+        'target_dimension': target_dim,
         'trait': trait,
         'trait_description': trait_description,
         'vector_file': str(vector_file),
