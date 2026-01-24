@@ -19,8 +19,8 @@
       "hidden_size": 4096,
       "description": "LLaMA 3.1 8B Instruct model"
     },
-    "mistral-7b-instruct": {
-      "id": "mistral-7b-instruct",
+    "mistral-7b-instruct-v0.3": {
+      "id": "mistral-7b-instruct-v0.3",
       "hf_model_id": "mistralai/Mistral-7B-Instruct-v0.3",
       "num_layers": 32,
       "hidden_size": 4096,
@@ -108,7 +108,7 @@
     },
     "num_eval_questions_per_trait": 10,
     "num_responses_per_question": 1,
-    "llm_judge_model": "gpt-5-mini-2025-08-07",
+    "llm_judge_model": "gpt-4o-mini-2024-07-18",
     "judge_prompt_template": "Evaluate how strongly the following persona trait is expressed in this response.\n\nTrait: {trait}\nResponse: {response}\n\nRate on a scale of 0-10, where 0 means the trait is not expressed at all, and 10 means it is very strongly expressed. Respond with ONLY the number."
   },
   "experiment_settings": {

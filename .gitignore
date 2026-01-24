@@ -52,7 +52,6 @@ models/*.pth
 logs/
 *.log
 *.csv
-experiments/*.json
 experiments/*.csv
 experiments/*.txt
 
@@ -96,3 +95,4 @@ desktop.ini
 
 # Response data (can be large)
 src/data/responses/*.json
+src/data/mappings/*.json

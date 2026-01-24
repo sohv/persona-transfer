@@ -8,7 +8,8 @@ Integrated metrics:
 
 Usage:
     python evaluate_transfer.py --config experiments/cross_family_eval.yaml
-    python evaluate_transfer.py --source qwen2.5-7b-instruct --target llama-3.1-8b-instruct --trait silly --coefficients -2.0 -1.0 0.0 1.0 2.0
+    python evaluate_transfer.py --source qwen2.5-7b-instruct --target llama-3.1-8b-instruct \\
+        --trait silly --coefficients -2.0 -1.0 0.0 1.0 2.0
 """
 
 import argparse
