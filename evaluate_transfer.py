@@ -29,7 +29,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
 from models import _load_model, _generate_text_response, unload_model
-from persona_vectors import load_persona_vectors
+from persona_vectors import load_persona_vectors, load_persona_vectors_from_file
 from prompts import get_evaluation_questions
 
 # Configure logging
@@ -372,8 +372,15 @@ async def evaluate_single_transfer(
     logger.info(f"Coefficients: {coefficients}")
     logger.info(f"Test prompts: {len(prompts)}")
     
-    # Load vectors
-    vector_data = load_persona_vectors(Path(vector_file))
+    # Load vectors: if a filepath was provided, use the synchronous file loader;
+    # otherwise attempt to load by model/trait via the async loader.
+    if isinstance(vector_file, (str, Path)):
+        vector_path = Path(vector_file)
+        vector_data = load_persona_vectors_from_file(vector_path)
+    else:
+        # Expecting (model_id, trait_id) style parameters for async loader
+        vector_data = await load_persona_vectors(source_model_id, trait)
+
     if not vector_data:
         raise ValueError(f"Failed to load vectors from {vector_file}")
     
