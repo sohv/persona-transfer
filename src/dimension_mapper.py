@@ -376,11 +376,13 @@ class DimensionMapper:
             # Apply transformation: v_target = W @ v_source + bias
             mapped_vector = W @ vector + bias
 
-            # Preserve norm (important for steering strength)
-            original_norm = np.linalg.norm(vector)
+            # Normalize to unit vector (all vectors should be unit length)
+            # This ensures fair comparison regardless of source/target model scales
             mapped_norm = np.linalg.norm(mapped_vector)
             if mapped_norm > 0:
-                mapped_vector = mapped_vector * (original_norm / mapped_norm)
+                mapped_vector = mapped_vector / mapped_norm
+
+            logger.debug(f"  {layer_name}: normalized mapped vector to unit length (norm={np.linalg.norm(mapped_vector):.6f})")
 
             mapped_vectors[layer_name] = mapped_vector
 

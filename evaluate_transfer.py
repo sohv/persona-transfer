@@ -167,8 +167,19 @@ class CoherenceMetric:
                     nlls.append(neg_log_likelihood)
             
             ppl = torch.exp(torch.stack(nlls).mean()).item()
-            # Convert to 0-100 scale (lower perplexity = higher score)
-            coherence = 100.0 / (1.0 + np.log(ppl + 1))
+
+            # Convert to 0-100 scale using normalized log scale
+            # Typical LLM perplexity ranges: 5-50 for coherent text, 50-500 for gibberish
+            min_ppl = 5.0   # Very coherent (score=100)
+            max_ppl = 100.0  # Incoherent (score=0)
+
+            # Clamp perplexity to expected range
+            ppl_clamped = max(min_ppl, min(max_ppl, ppl))
+
+            # Normalize using log scale (lower perplexity = higher score)
+            coherence = 100.0 * (1.0 - (np.log(ppl_clamped) - np.log(min_ppl)) / (np.log(max_ppl) - np.log(min_ppl)))
+
+            logger.debug(f"Perplexity: {ppl:.2f} -> Coherence: {coherence:.1f}/100")
             return max(0.0, min(100.0, coherence))
         except Exception as e:
             logger.debug(f"Perplexity computation failed: {e}")
@@ -352,7 +363,8 @@ async def evaluate_single_transfer(
     coefficients,
     trait_description,
     max_tokens=150,
-    use_trait_judge=True
+    use_trait_judge=True,
+    layer_depth=None
 ):
     """Evaluate transfer for one source-target pair with integrated metrics."""
     
@@ -406,9 +418,10 @@ async def evaluate_single_transfer(
                     system_prompt="You are a helpful assistant.",
                     user_prompt=prompt,
                     max_new_tokens=max_tokens,
-                    persona_vectors=vector_data['vectors'] if coefficient != 0.0 else None,
+                    persona_vectors=vector_data['vectors'],  # Always pass vectors, let coefficient control strength
                     steering_coefficient=coefficient,
-                    source_model_id=source_model_id  # Pass source model ID for dimension mapping
+                    source_model_id=source_model_id,  # Pass source model ID for dimension mapping
+                    layer_depth=layer_depth
                 )
                 
                 # Compute metrics
@@ -574,7 +587,14 @@ Examples:
         action='store_true',
         help='Enable verbose logging'
     )
-    
+
+    parser.add_argument(
+        '--layer-depth',
+        type=float,
+        default=0.625,
+        help='Relative layer depth for steering (0.0-1.0). Default: 0.625 (layer 20 in 32-layer models)'
+    )
+
     args = parser.parse_args()
     
     if args.verbose:
@@ -628,7 +648,8 @@ Examples:
                 prompts=prompts,
                 coefficients=args.coefficients,
                 max_tokens=args.max_tokens,
-                use_trait_judge=True
+                use_trait_judge=True,
+                layer_depth=args.layer_depth
             )
         )
         

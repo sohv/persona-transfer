@@ -263,7 +263,7 @@ def _detach_hooks(hooks):
     for hook in hooks:
         hook.remove()
 
-def _generate_text_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens=150, persona_vectors=None, steering_coefficient=0.0, source_model_id=None):
+def _generate_text_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens=150, persona_vectors=None, steering_coefficient=0.0, source_model_id=None, layer_depth=None):
     """
     Generate text response using HuggingFace models with optional persona vector steering.
 
@@ -284,9 +284,9 @@ def _generate_text_response(model, tokenizer, model_id, system_prompt, user_prom
     # Detect if this is trait generation (needs lower temperature for JSON)
     is_trait_generation = "Generate the complete trait artifacts" in user_prompt
 
-    return _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens, persona_vectors, steering_coefficient, is_trait_generation, source_model_id)
+    return _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens, persona_vectors, steering_coefficient, is_trait_generation, source_model_id, layer_depth)
 
-def _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens=150, persona_vectors=None, steering_coefficient=0.0, is_trait_generation=False, source_model_id=None):
+def _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt, max_new_tokens=150, persona_vectors=None, steering_coefficient=0.0, is_trait_generation=False, source_model_id=None, layer_depth=None):
     """Generate response using HuggingFace transformers model."""
     # Construct the full prompt based on model type
     if "qwen" in model_id.lower():
@@ -317,8 +317,8 @@ def _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt
     # Setup steering: Chen et al. activation injection for Qwen when steering, neutral otherwise
     steering_hooks = []
     
-    if steering_coefficient == 0.0 or not persona_vectors:
-        # NO STEERING: Completely neutral generation (baseline)
+    if not persona_vectors:
+        # NO VECTORS PROVIDED: Completely neutral generation (baseline)
         logger.info(f"Using NO STEERING (neutral baseline) for {model_id}")
         # Temperature varies by use case
         if is_trait_generation:
@@ -337,7 +337,8 @@ def _generate_hf_response(model, tokenizer, model_id, system_prompt, user_prompt
             persona_vectors,
             steering_coefficient,
             source_model_id=source_model_id,
-            target_model_id=model_id
+            target_model_id=model_id,
+            layer_depth=layer_depth
         )
         # Temperature varies by use case
         if is_trait_generation:
@@ -659,7 +660,7 @@ def _setup_steering_hooks(model, persona_vectors, steering_coefficient, source_m
     
     return hooks
 
-def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient, source_model_id=None, target_model_id=None):
+def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient, source_model_id=None, target_model_id=None, layer_depth=None):
     """
     Chen et al. (2024) style layer 20 activation injection for HuggingFace models.
     Injects persona vector directly into layer 20 activations during forward pass.
@@ -721,29 +722,38 @@ def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient, 
                 logger.error(f"Steering will be skipped. Provide model IDs to enable cross-model transfer.")
                 return []  # Return empty hooks list
 
-    # Only inject at layer 20 (following Chen et al. methodology)
-    target_layer_name = "layer_20"
+    # Determine target layer based on layer_depth or default to 0.625 (layer 20 in 32-layer models)
+    if layer_depth is None:
+        layer_depth = 0.625  # Default matches layer 20 in 32-layer models
+
+    # Calculate target layer number based on model's total layers
+    total_layers = len(model.model.layers)
+    target_layer_num = int(total_layers * layer_depth)
+    target_layer_name = f"layer_{target_layer_num}"
+
+    logger.info(f"Using layer depth {layer_depth:.3f} -> layer {target_layer_num}/{total_layers}")
 
     # Debug: List all available vector layers
     logger.info(f"Available persona vector layers: {list(persona_vectors.keys())}")
 
     if target_layer_name not in persona_vectors:
-        logger.warning(f"No persona vector found for {target_layer_name}, skipping Chen injection")
-        # Try to find the closest layer if layer_20 doesn't exist
+        logger.warning(f"No persona vector found for {target_layer_name}, trying fallback")
+        # Try to find the closest layer
         available_layers = [k for k in persona_vectors.keys() if k.startswith('layer_')]
         if available_layers:
-            # Use middle layer as fallback
-            middle_idx = len(available_layers) // 2
-            target_layer_name = available_layers[middle_idx]
-            logger.info(f"Using fallback layer: {target_layer_name}")
+            # Find layer closest to target depth
+            layer_nums = [int(k.split('_')[1]) for k in available_layers]
+            closest_layer = min(layer_nums, key=lambda x: abs(x - target_layer_num))
+            target_layer_name = f"layer_{closest_layer}"
+            target_layer_num = closest_layer
+            logger.info(f"Using closest available layer: {target_layer_name}")
         else:
             return hooks
 
     try:
-        # Extract layer number from target_layer_name (e.g., "layer_20" -> 20)
-        layer_num = int(target_layer_name.split('_')[1])
-        target_layer = model.model.layers[layer_num]
-        logger.info(f"Targeting model layer {layer_num} for Chen injection")
+        # Use the calculated target_layer_num
+        target_layer = model.model.layers[target_layer_num]
+        logger.info(f"Targeting model layer {target_layer_num} (depth {layer_depth:.3f}) for Chen injection")
         device = next(model.parameters()).device
         model_dtype = next(model.parameters()).dtype
 
@@ -767,18 +777,18 @@ def _setup_chen_layer20_injection(model, persona_vectors, steering_coefficient, 
 
         scaled_vector = vector_tensor * steering_coefficient
         
-        logger.info(f"Chen et al. injection: layer {layer_num}, coefficient {steering_coefficient}, vector shape {scaled_vector.shape}")
+        logger.info(f"Chen et al. injection: layer {target_layer_num}, coefficient {steering_coefficient}, vector shape {scaled_vector.shape}")
         
         # Cache for adapted vector to avoid recomputing on every token
         adapted_vector_cache = {'vector': None, 'target_size': None}
         
         def chen_injection_hook(module, input, output):
             """
-            Inject persona vector into layer 20 activations at final token position.
+            Inject persona vector into target layer activations at final token position.
             Following Chen et al. (2024) methodology exactly.
             """
             try:
-                logger.info(f"Chen injection hook triggered on layer 20 with coefficient {steering_coefficient}")
+                logger.info(f"Chen injection hook triggered on layer {target_layer_num} (depth {layer_depth:.3f}) with coefficient {steering_coefficient}")
                 # Handle tuple output (hidden_states, attention_weights, etc.)
                 if isinstance(output, tuple):
                     hidden_states = output[0]
