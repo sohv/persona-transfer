@@ -429,17 +429,23 @@ async def evaluate_single_transfer(
                 trait_strength = None
                 if trait_judge:
                     trait_strength = trait_judge.evaluate(response, trait, trait_description)
-                
+
+                # Collapse detection: coherence below threshold indicates incoherent generation
+                COLLAPSE_THRESHOLD = 30.0  # Coherence < 30 = collapsed output
+                is_collapsed = coherence < COLLAPSE_THRESHOLD
+
                 prompt_results['responses'].append({
                     'coefficient': coefficient,
                     'response': response,
                     'coherence': coherence,
                     'trait_strength': trait_strength,
-                    'length': len(response.split())
+                    'length': len(response.split()),
+                    'collapsed': is_collapsed
                 })
                 
+                collapse_status = " [COLLAPSED]" if is_collapsed else ""
                 logger.debug(f"  Response length: {len(response.split())} words, "
-                           f"Coherence: {coherence:.1f}, "
+                           f"Coherence: {coherence:.1f}{collapse_status}, "
                            f"Trait Strength: {trait_strength if trait_strength else 'N/A'}")
                 
             except Exception as e:
@@ -449,7 +455,8 @@ async def evaluate_single_transfer(
                     'response': None,
                     'error': str(e),
                     'coherence': 0.0,
-                    'trait_strength': None
+                    'trait_strength': None,
+                    'collapsed': True  # Errors count as collapsed
                 })
         
         results.append(prompt_results)
@@ -675,18 +682,22 @@ Examples:
         
         avg_coherence_by_coef = {}
         avg_trait_strength_by_coef = {}
-        
+        collapse_by_coef = {}
+
         for prompt_result in evaluation_results['results']:
             for response in prompt_result['responses']:
                 coef = response['coefficient']
                 coherence = response.get('coherence', 0.0)
                 trait_strength = response.get('trait_strength', None)
-                
+                collapsed = response.get('collapsed', False)
+
                 if coef not in avg_coherence_by_coef:
                     avg_coherence_by_coef[coef] = []
                     avg_trait_strength_by_coef[coef] = []
-                
+                    collapse_by_coef[coef] = []
+
                 avg_coherence_by_coef[coef].append(coherence)
+                collapse_by_coef[coef].append(collapsed)
                 if trait_strength is not None:
                     avg_trait_strength_by_coef[coef].append(trait_strength)
         
@@ -704,7 +715,13 @@ Examples:
                 logger.info(f"  {coef:+.1f}: {avg:.1f}/10")
             else:
                 logger.info(f"  {coef:+.1f}: N/A (LLM judge unavailable)")
-        
+
+        logger.info("\nCollapse Rate (% Incoherent Outputs) by Coefficient:")
+        for coef in sorted(collapse_by_coef.keys()):
+            collapsed_flags = collapse_by_coef[coef]
+            collapse_rate = (sum(collapsed_flags) / len(collapsed_flags) * 100) if collapsed_flags else 0.0
+            logger.info(f"  {coef:+.1f}: {collapse_rate:.1f}%")
+
         logger.info(f"\nTotal runtime: {evaluation_results['elapsed_seconds']:.1f}s")
         logger.info("="*80)
         
