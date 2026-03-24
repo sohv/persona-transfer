@@ -25,7 +25,7 @@ from typing import Optional, Dict, List
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from models import _load_model, _generate_text_response, unload_model
 from persona_vectors import load_persona_vectors, load_persona_vectors_from_file
@@ -484,7 +484,7 @@ async def evaluate_single_transfer(
         source_dim = None
 
     # Get target dimension from config
-    with open("src/config/config.json") as f:
+    with open("config/config.json") as f:
         config = json.load(f)
     target_dim = config['models'].get(target_model_id, {}).get('hidden_size', source_dim)
 
@@ -609,7 +609,7 @@ Examples:
     
     # Load trait description from config
     import json
-    with open("src/config/config.json") as f:
+    with open("config/config.json") as f:
         config = json.load(f)
     
     if args.trait not in config['traits']:
@@ -623,7 +623,7 @@ Examples:
     if args.vectors:
         vector_file = Path(args.vectors)
     else:
-        vector_file = Path(f"src/data/vectors/{args.source}_{args.trait}.json")
+        vector_file = Path(f"data/vectors/{args.source}_{args.trait}.json")
     
     if not vector_file.exists():
         logger.error(f"Vector file not found: {vector_file}")

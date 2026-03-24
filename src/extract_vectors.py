@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 # Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent))
 
 from models import _load_model
 from persona_vectors import generate_persona_vectors, NumpyEncoder
@@ -72,8 +72,8 @@ Available traits:
     
     parser.add_argument(
         '--output',
-        default='src/data/vectors',
-        help='Output directory for vector files (default: src/data/vectors)'
+        default='data/vectors',
+        help='Output directory for vector files (default: data/vectors)'
     )
     
     parser.add_argument(

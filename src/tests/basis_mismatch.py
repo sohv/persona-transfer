@@ -30,7 +30,7 @@ import logging
 import numpy as np
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from models import _load_model, _generate_text_response, unload_model
 from persona_vectors import (

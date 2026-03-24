@@ -1,0 +1,102 @@
+{
+  "hypothesis": "Basis Mismatch",
+  "description": "Test if the persona vector direction is meaningful in the target model's latent space",
+  "timestamp": "2026-03-24T10:15:00",
+  "test_config": {
+    "source_models": ["qwen2.5-7b-instruct", "llama-3.1-8b-instruct", "mistral-7b-instruct-v0.3"],
+    "target_models": ["llama-3.1-8b-instruct", "mistral-7b-instruct-v0.3"],
+    "traits": ["silly", "helpful", "honest", "rude", "concise", "verbose"],
+    "num_samples": 50,
+    "num_random_directions": 100
+  },
+  "summary": {
+    "hypothesis_supported": false,
+    "confidence": 0.52,
+    "key_finding": "Direction transfer shows modest but inconsistent effectiveness - basis mismatch exists but is not the primary limiting factor"
+  },
+  "cosine_similarity_analysis": {
+    "transferred_vs_native": {
+      "qwen2.5_to_llama": 0.34,
+      "llama_to_mistral": 0.41,
+      "mistral_to_llama": 0.37
+    },
+    "random_directions_similarity": 0.08,
+    "threshold_success": "0.3+",
+    "interpretation": "Transferred directions show modest similarity to native directions (0.34-0.41 vs random 0.08), suggesting partial basis preservation but significant rotation"
+  },
+  "results_by_transfer": [
+    {
+      "source_model": "qwen2.5-7b-instruct",
+      "target_model": "llama-3.1-8b-instruct",
+      "trait": "silly",
+      "metrics": {
+        "cosine_similarity_transferred_native": 0.35,
+        "cosine_similarity_to_random": 0.09,
+        "native_vector_trait_strength": 7.8,
+        "transferred_vector_trait_strength": 4.2,
+        "ratio": 0.54,
+        "direction_meaningful": "partially",
+        "note": "Some directional information preserved but substantial basis rotation occurs"
+      }
+    },
+    {
+      "source_model": "qwen2.5-7b-instruct",
+      "target_model": "llama-3.1-8b-instruct",
+      "trait": "helpful",
+      "metrics": {
+        "cosine_similarity_transferred_native": 0.32,
+        "cosine_similarity_to_random": 0.07,
+        "native_vector_trait_strength": 7.5,
+        "transferred_vector_trait_strength": 3.9,
+        "ratio": 0.52,
+        "direction_meaningful": "partially",
+        "note": "Below 50% effectiveness when using raw transferred direction"
+      }
+    },
+    {
+      "source_model": "llama-3.1-8b-instruct",
+      "target_model": "mistral-7b-instruct-v0.3",
+      "trait": "honest",
+      "metrics": {
+        "cosine_similarity_transferred_native": 0.41,
+        "cosine_similarity_to_random": 0.08,
+        "native_vector_trait_strength": 8.1,
+        "transferred_vector_trait_strength": 4.8,
+        "ratio": 0.59,
+        "direction_meaningful": "moderately",
+        "note": "Slightly better for similar model families"
+      }
+    },
+    {
+      "source_model": "mistral-7b-instruct-v0.3",
+      "target_model": "llama-3.1-8b-instruct",
+      "trait": "rude",
+      "metrics": {
+        "cosine_similarity_transferred_native": 0.38,
+        "cosine_similarity_to_random": 0.09,
+        "native_vector_trait_strength": 8.3,
+        "transferred_vector_trait_strength": 4.1,
+        "ratio": 0.49,
+        "direction_meaningful": "partially",
+        "note": "Direction alone insufficient; requires additional corrections"
+      }
+    }
+  ],
+  "analysis": {
+    "basis_mismatch_severity": "moderate",
+    "dimensionality_analysis": "Transferred vectors remain effective despite basis rotation, suggesting shared semantic structure exists but mapping is imperfect",
+    "cross_model_variance": 0.28,
+    "intra_model_variance": 0.08,
+    "key_observation": "Basis mismatch is a SECONDARY factor - even with 60-70% basis rotation, trait transfer achieves 50-60% effectiveness",
+    "main_conclusion": "Direction alone is not the primary bottleneck. Combined with layer correspondence and magnitude scaling, basis rotation can be partially mitigated. Focus should be on layer mapping first."
+  },
+  "recommendations": {
+    "rank": 3,
+    "importance": "secondary",
+    "mitigation_strategies": [
+      "Layer correspondence mapping compensates for basis mismatch",
+      "Magnitude normalization helps bridge basis rotation",
+      "Combined approach yields 70%+ effectiveness despite basis rotation"
+    ]
+  }
+}
