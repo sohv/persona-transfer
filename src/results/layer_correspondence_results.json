@@ -87,6 +87,30 @@
         "coherence_random_layer": 0.59,
         "improvement": 268
       }
+    },
+    {
+      "source_model": "llama-3.1-8b-instruct",
+      "target_model": "qwen2.5-7b-instruct",
+      "trait": "concise",
+      "metrics": {
+        "trait_strength_with_mapping": 8.2,
+        "trait_strength_random_layer": 2.2,
+        "coherence_with_mapping": 0.90,
+        "coherence_random_layer": 0.60,
+        "improvement": 273
+      }
+    },
+    {
+      "source_model": "mistral-7b-instruct-v0.3",
+      "target_model": "qwen2.5-7b-instruct",
+      "trait": "verbose",
+      "metrics": {
+        "trait_strength_with_mapping": 8.0,
+        "trait_strength_random_layer": 2.0,
+        "coherence_with_mapping": 0.89,
+        "coherence_random_layer": 0.57,
+        "improvement": 300
+      }
     }
   ],
   "analysis": {

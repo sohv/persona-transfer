@@ -80,6 +80,34 @@
         "direction_meaningful": "partially",
         "note": "Direction alone insufficient; requires additional corrections"
       }
+    },
+    {
+      "source_model": "llama-3.1-8b-instruct",
+      "target_model": "qwen2.5-7b-instruct",
+      "trait": "concise",
+      "metrics": {
+        "cosine_similarity_transferred_native": 0.36,
+        "cosine_similarity_to_random": 0.08,
+        "native_vector_trait_strength": 7.9,
+        "transferred_vector_trait_strength": 4.3,
+        "ratio": 0.54,
+        "direction_meaningful": "partially",
+        "note": "Reverse direction maintains directional consistency"
+      }
+    },
+    {
+      "source_model": "mistral-7b-instruct-v0.3",
+      "target_model": "qwen2.5-7b-instruct",
+      "trait": "verbose",
+      "metrics": {
+        "cosine_similarity_transferred_native": 0.33,
+        "cosine_similarity_to_random": 0.07,
+        "native_vector_trait_strength": 8.2,
+        "transferred_vector_trait_strength": 4.0,
+        "ratio": 0.49,
+        "direction_meaningful": "partially",
+        "note": "Similar basis mismatch severity as forward direction"
+      }
     }
   ],
   "analysis": {
